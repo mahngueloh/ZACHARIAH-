@@ -55,13 +55,12 @@ app.post("/api/pair", async (req, res) => {
 
     // How many times we'll silently reconnect if WhatsApp closes the
     // connection while we're still waiting for the code to be entered.
-    // This is normal/expected during pairing, not a real failure —
-    // we only give up after several bad closes in a row.
-    const MAX_RETRIES = 6;
+    const MAX_RETRIES = 8;
+    let socket = null;
 
     async function startSocket() {
         const job = jobs.get(jobId);
-        if (!job) return; // job was cleaned up (e.g. server restarted) — nothing to do
+        if (!job) return; // job was cleaned up — nothing to do
 
         const { state, saveCreds } = await useMultiFileAuthState(authDir);
         const logger = pino({ level: "silent" });
@@ -79,16 +78,12 @@ app.post("/api/pair", async (req, res) => {
 
         const needsPairing = !state.creds.registered;
 
-        const sock = makeWASocket({
+        socket = makeWASocket({
             version,
             auth: {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, logger),
             },
-            // Must use Baileys' built-in Browsers helper (not a custom
-            // string) and mobile:false — a custom browser identity or
-            // mobile:true can make WhatsApp issue a pairing code that
-            // looks valid but silently fails to link.
             browser: Browsers.ubuntu("Chrome"),
             mobile: false,
             printQRInTerminal: false,
@@ -101,32 +96,29 @@ app.post("/api/pair", async (req, res) => {
             getMessage: async () => undefined,
         });
 
-        sock.ev.on("creds.update", saveCreds);
+        socket.ev.on("creds.update", saveCreds);
 
         let pairingRequested = false;
 
-        sock.ev.on("connection.update", async (update) => {
+        socket.ev.on("connection.update", async (update) => {
             const { connection, lastDisconnect, qr } = update;
             const j = jobs.get(jobId);
             if (!j) return;
 
-            // The 'qr' field appearing signals that WhatsApp has finished
-            // the handshake and is ready for a pairing code request. This
-            // is the only reliable moment to call requestPairingCode() —
-            // requesting on a fixed timer instead can produce a code that
-            // WhatsApp rejects with "Couldn't link device".
             if (qr && needsPairing && !pairingRequested && !j.code) {
                 pairingRequested = true;
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     try {
-                        const code = await sock.requestPairingCode(number);
+                        const code = await socket.requestPairingCode(number);
                         j.status = "code_ready";
                         j.code = code?.replace(/\W/g, "").match(/.{1,4}/g)?.join("-") || code;
+                        console.log(`[${jobId}] Pairing code ready: ${j.code}`);
                         break;
                     } catch (e) {
                         if (attempt === 3) {
                             j.status = "error";
                             j.error = "Failed to request pairing code: " + e.message;
+                            console.error(`[${jobId}] Code request failed:`, e.message);
                             cleanupJob(jobId, authDir);
                             return;
                         }
@@ -137,18 +129,56 @@ app.post("/api/pair", async (req, res) => {
 
             if (connection === "open") {
                 try {
-                    // Give Baileys a moment to finish writing all key files.
-                    await delay(2000);
+                    console.log(`[${jobId}] Connection opened, waiting for Baileys to write files...`);
+                    // Give Baileys extra time on Render
+                    await delay(4000);
+                    
+                    // Verify auth files exist
+                    const files = fs.readdirSync(authDir);
+                    console.log(`[${jobId}] Auth directory contents:`, files);
+                    
+                    // Check nested dirs too
+                    let totalFiles = 0;
+                    function countFiles(dir) {
+                        const entries = fs.readdirSync(dir, { withFileTypes: true });
+                        for (const entry of entries) {
+                            if (entry.isDirectory()) {
+                                countFiles(path.join(dir, entry.name));
+                            } else {
+                                totalFiles++;
+                            }
+                        }
+                    }
+                    countFiles(authDir);
+                    
+                    if (totalFiles === 0) {
+                        throw new Error("No auth files found after connection");
+                    }
+                    
+                    console.log(`[${jobId}] Found ${totalFiles} files, encoding session...`);
                     const sessionId = encodeSession(authDir);
+                    
+                    if (!sessionId || sessionId.length < 50) {
+                        throw new Error("Session ID too short or empty");
+                    }
+                    
                     j.status = "linked";
                     j.sessionId = sessionId;
-                    await sock.end(undefined);
+                    console.log(`[${jobId}] ✅ Session ID generated (length: ${sessionId.length})`);
+                    
+                    try {
+                        await socket.end(undefined);
+                    } catch (e) {
+                        console.log(`[${jobId}] Socket end error (non-fatal):`, e.message);
+                    }
+                    
                     // Keep the job around for a few minutes so the frontend
                     // can still fetch the result, then clean up.
                     setTimeout(() => cleanupJob(jobId, authDir), 5 * 60 * 1000);
                 } catch (e) {
                     j.status = "error";
                     j.error = "Linked, but failed to build session ID: " + e.message;
+                    console.error(`[${jobId}] Session encoding failed:`, e.message, e.stack);
                 }
             } else if (connection === "close") {
                 if (j.status === "linked") return; // already done, nothing to retry
@@ -159,27 +189,31 @@ app.post("/api/pair", async (req, res) => {
                 if (loggedOut) {
                     j.status = "error";
                     j.error = "Device was logged out during pairing. Please try again.";
+                    console.log(`[${jobId}] Logged out during pairing`);
                     cleanupJob(jobId, authDir);
                     return;
                 }
 
                 j.retries += 1;
+                console.log(`[${jobId}] Disconnect (status ${statusCode}), retry ${j.retries}/${MAX_RETRIES}`);
+                
                 if (j.retries > MAX_RETRIES) {
                     j.status = "error";
-                    j.error = "Could not complete pairing after several attempts (status " + statusCode + "). Please try again.";
+                    j.error = "Could not complete pairing after several attempts. Please try again.";
+                    console.error(`[${jobId}] Max retries exceeded`);
                     cleanupJob(jobId, authDir);
                     return;
                 }
 
-                // Routine close while waiting for the code to be entered —
-                // reconnect quietly and keep showing the same code.
-                await delay(1000);
+                // Reconnect quietly and keep showing the same code
+                await delay(1500);
                 startSocket().catch((e) => {
                     const jj = jobs.get(jobId);
                     if (jj) {
                         jj.status = "error";
                         jj.error = "Reconnect failed: " + e.message;
                     }
+                    console.error(`[${jobId}] Reconnect error:`, e.message);
                 });
             }
         });
@@ -193,6 +227,7 @@ app.post("/api/pair", async (req, res) => {
             job.status = "error";
             job.error = e.message;
         }
+        console.error(`[${jobId}] Pairing error:`, e.message);
         fs.rm(authDir, { recursive: true, force: true }, () => {});
     }
 });
