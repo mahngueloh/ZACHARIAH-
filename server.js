@@ -6,6 +6,8 @@ const {
     default: makeWASocket,
     useMultiFileAuthState,
     makeCacheableSignalKeyStore,
+    fetchLatestBaileysVersion,
+    Browsers,
     DisconnectReason,
     delay,
 } = require("@whiskeysockets/baileys");
@@ -64,45 +66,74 @@ app.post("/api/pair", async (req, res) => {
         const { state, saveCreds } = await useMultiFileAuthState(authDir);
         const logger = pino({ level: "silent" });
 
+        let version;
+        try {
+            const v = await Promise.race([
+                fetchLatestBaileysVersion(),
+                new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000)),
+            ]);
+            version = v.version;
+        } catch {
+            version = [2, 3000, 1015920675]; // known-good fallback
+        }
+
+        const needsPairing = !state.creds.registered;
+
         const sock = makeWASocket({
+            version,
             auth: {
                 creds: state.creds,
                 keys: makeCacheableSignalKeyStore(state.keys, logger),
             },
+            // Must use Baileys' built-in Browsers helper (not a custom
+            // string) and mobile:false — a custom browser identity or
+            // mobile:true can make WhatsApp issue a pairing code that
+            // looks valid but silently fails to link.
+            browser: Browsers.ubuntu("Chrome"),
+            mobile: false,
             printQRInTerminal: false,
             logger,
-            browser: ["MAHNGUELOH MD SESSION", "Chrome", "1.0"],
+            syncFullHistory: false,
+            connectTimeoutMs: 60_000,
+            keepAliveIntervalMs: 30_000,
+            retryRequestDelayMs: 3_000,
+            markOnlineOnConnect: false,
+            getMessage: async () => undefined,
         });
 
         sock.ev.on("creds.update", saveCreds);
 
-        // Only request a fresh pairing code the first time — on a retry
-        // after a routine reconnect, the previously issued code is still
-        // valid, so we keep showing it rather than confusing the user
-        // with a new one every few seconds.
-        if (!sock.authState.creds.registered && !job.code) {
-            await delay(1500);
-            try {
-                const code = await sock.requestPairingCode(number);
-                const j = jobs.get(jobId);
-                if (j) {
-                    j.status = "code_ready";
-                    j.code = code?.match(/.{1,4}/g)?.join("-") || code;
-                }
-            } catch (e) {
-                const j = jobs.get(jobId);
-                if (j) {
-                    j.status = "error";
-                    j.error = "Failed to request pairing code: " + e.message;
-                }
-                return;
-            }
-        }
+        let pairingRequested = false;
 
         sock.ev.on("connection.update", async (update) => {
-            const { connection, lastDisconnect } = update;
+            const { connection, lastDisconnect, qr } = update;
             const j = jobs.get(jobId);
             if (!j) return;
+
+            // The 'qr' field appearing signals that WhatsApp has finished
+            // the handshake and is ready for a pairing code request. This
+            // is the only reliable moment to call requestPairingCode() —
+            // requesting on a fixed timer instead can produce a code that
+            // WhatsApp rejects with "Couldn't link device".
+            if (qr && needsPairing && !pairingRequested && !j.code) {
+                pairingRequested = true;
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        const code = await sock.requestPairingCode(number);
+                        j.status = "code_ready";
+                        j.code = code?.replace(/\W/g, "").match(/.{1,4}/g)?.join("-") || code;
+                        break;
+                    } catch (e) {
+                        if (attempt === 3) {
+                            j.status = "error";
+                            j.error = "Failed to request pairing code: " + e.message;
+                            cleanupJob(jobId, authDir);
+                            return;
+                        }
+                        await delay(5000);
+                    }
+                }
+            }
 
             if (connection === "open") {
                 try {

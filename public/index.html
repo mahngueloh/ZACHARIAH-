@@ -254,11 +254,16 @@ async function startPairing() {
   }
 }
 
+let pollFailCount = 0;
+const MAX_POLL_FAILS = 5;
+
 async function poll(jobId) {
   try {
     const res = await fetch('/api/status/' + jobId);
     const job = await res.json();
     if (!res.ok) throw new Error(job.error || 'Job expired');
+
+    pollFailCount = 0; // reset on any successful round-trip
 
     if (job.status === 'code_ready' && job.code) {
       if (resultValue.textContent !== job.code) {
@@ -297,10 +302,17 @@ async function poll(jobId) {
       pairBtn.textContent = 'Get Pairing Code';
     }
   } catch (e) {
-    clearInterval(poller);
-    setStatus(e.message, 'err');
-    pairBtn.disabled = false;
-    pairBtn.textContent = 'Get Pairing Code';
+    pollFailCount += 1;
+    if (pollFailCount >= MAX_POLL_FAILS) {
+      clearInterval(poller);
+      setStatus('Lost connection to the server (' + e.message + '). Please try again.', 'err');
+      newCodeBtn.style.display = 'none';
+      pairBtn.disabled = false;
+      pairBtn.textContent = 'Get Pairing Code';
+    } else {
+      // Transient network blip — stay quiet and let the next poll retry.
+      setStatus('Reconnecting...', '');
+    }
   }
 }
 
