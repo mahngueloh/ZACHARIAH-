@@ -127,27 +127,6 @@
   }
   .status-line.ok { color: var(--ok); }
   .status-line.err { color: var(--danger); }
-  textarea {
-    width: 100%;
-    margin-top: 10px;
-    background: #0d0d0d;
-    border: 1px solid var(--card-border);
-    color: var(--text);
-    border-radius: 8px;
-    padding: 10px;
-    font-size: 11px;
-    font-family: monospace;
-    resize: none;
-    height: 90px;
-  }
-  .copy-btn {
-    margin-top: 8px;
-    background: transparent;
-    border: 1px solid var(--gold-dim);
-    color: var(--gold);
-    font-size: 12px;
-    padding: 9px;
-  }
   .steps {
     margin-top: 10px;
     font-size: 12px;
@@ -181,8 +160,6 @@
       <div class="steps" id="steps"></div>
       <div class="status-line" id="statusLine"></div>
       <button class="copy-btn" id="newCodeBtn" style="display:none">Request New Code</button>
-      <textarea id="sessionBox" style="display:none" readonly></textarea>
-      <button class="copy-btn" id="copyBtn" style="display:none">Copy Session ID</button>
     </div>
 
     <div class="footer">MAHNGUELOH MD — Session Generator</div>
@@ -196,8 +173,6 @@ const resultLabel = document.getElementById('resultLabel');
 const resultValue = document.getElementById('resultValue');
 const statusLine = document.getElementById('statusLine');
 const steps = document.getElementById('steps');
-const sessionBox = document.getElementById('sessionBox');
-const copyBtn = document.getElementById('copyBtn');
 const newCodeBtn = document.getElementById('newCodeBtn');
 
 fetch('/api/site-name').then(r => r.json()).then(d => {
@@ -210,10 +185,6 @@ fetch('/api/site-name').then(r => r.json()).then(d => {
 let poller = null;
 let currentJobId = null;
 
-// When the user switches back to this tab (e.g. after entering the code
-// in WhatsApp), immediately re-check status instead of waiting for the
-// next scheduled tick — makes recovery from a spun-down free instance
-// feel instant rather than adding an extra delay on top of the wake-up.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && currentJobId && poller) {
     poll(currentJobId);
@@ -243,8 +214,6 @@ async function startPairing() {
   result.classList.add('show');
   resultLabel.textContent = 'Pairing Code';
   resultValue.textContent = '— — — —';
-  sessionBox.style.display = 'none';
-  copyBtn.style.display = 'none';
   steps.innerHTML = '';
   setStatus('Contacting WhatsApp servers...', '');
 
@@ -267,7 +236,7 @@ async function startPairing() {
 }
 
 let pollFailCount = 0;
-const MAX_POLL_FAILS = 30; // tolerate up to ~60s of downtime (Render free-tier wake-up can take 50s+)
+const MAX_POLL_FAILS = 30;
 
 async function poll(jobId) {
   try {
@@ -275,12 +244,11 @@ async function poll(jobId) {
     const job = await res.json();
     if (!res.ok) throw new Error(job.error || 'Job expired');
 
-    pollFailCount = 0; // reset on any successful round-trip
+    pollFailCount = 0;
 
     if (job.status === 'code_ready' && job.code) {
       if (resultValue.textContent !== job.code) {
         resultValue.textContent = job.code;
-        // Auto-copy the code to clipboard as soon as it's generated.
         const rawCode = job.code.replace(/-/g, '');
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(rawCode).catch(() => {});
@@ -294,15 +262,13 @@ async function poll(jobId) {
         '4. Paste or enter the code above (already copied)';
       setStatus('Code copied to clipboard — waiting for you to enter it in WhatsApp...', '');
       newCodeBtn.style.display = 'block';
-    } else if (job.status === 'linked' && job.sessionId) {
+    } else if (job.status === 'linked') {
+      // Session ID is sent via WhatsApp — don't show it here
       clearInterval(poller);
-      resultLabel.textContent = 'Linked! Your Session ID';
+      resultLabel.textContent = 'SUCCESS';
       resultValue.textContent = '✅ Paired successfully';
-      steps.innerHTML = 'Copy the session ID below and save it somewhere safe — it will not be shown again.';
-      setStatus('Session ready.', 'ok');
-      sessionBox.style.display = 'block';
-      sessionBox.value = job.sessionId;
-      copyBtn.style.display = 'block';
+      steps.innerHTML = '<b>Your session ID has been sent to your WhatsApp number.</b><br>Check your WhatsApp messages — do not share it with anyone!';
+      setStatus('Session ID sent via WhatsApp.', 'ok');
       newCodeBtn.style.display = 'none';
       pairBtn.disabled = false;
       pairBtn.textContent = 'Get Pairing Code';
@@ -322,18 +288,10 @@ async function poll(jobId) {
       pairBtn.disabled = false;
       pairBtn.textContent = 'Get Pairing Code';
     } else {
-      // Transient network blip — stay quiet and let the next poll retry.
       setStatus('Reconnecting...', '');
     }
   }
 }
-
-copyBtn.addEventListener('click', () => {
-  sessionBox.select();
-  document.execCommand('copy');
-  copyBtn.textContent = 'Copied ✓';
-  setTimeout(() => (copyBtn.textContent = 'Copy Session ID'), 1500);
-});
 </script>
 </body>
 </html>
