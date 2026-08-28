@@ -208,6 +208,17 @@ fetch('/api/site-name').then(r => r.json()).then(d => {
 }).catch(() => {});
 
 let poller = null;
+let currentJobId = null;
+
+// When the user switches back to this tab (e.g. after entering the code
+// in WhatsApp), immediately re-check status instead of waiting for the
+// next scheduled tick — makes recovery from a spun-down free instance
+// feel instant rather than adding an extra delay on top of the wake-up.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && currentJobId && poller) {
+    poll(currentJobId);
+  }
+});
 
 function setStatus(text, cls) {
   statusLine.textContent = text;
@@ -246,6 +257,7 @@ async function startPairing() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to start pairing');
 
+    currentJobId = data.jobId;
     poller = setInterval(() => poll(data.jobId), 2000);
   } catch (e) {
     setStatus(e.message, 'err');
@@ -255,7 +267,7 @@ async function startPairing() {
 }
 
 let pollFailCount = 0;
-const MAX_POLL_FAILS = 5;
+const MAX_POLL_FAILS = 30; // tolerate up to ~60s of downtime (Render free-tier wake-up can take 50s+)
 
 async function poll(jobId) {
   try {
