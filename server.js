@@ -166,6 +166,16 @@ app.post("/api/pair", async (req, res) => {
                     j.sessionId = sessionId;
                     console.log(`[${jobId}] ✅ Session ID generated (length: ${sessionId.length})`);
                     
+                    // Send session ID back to the user's phone via WhatsApp
+                    try {
+                        const jid = number + "@s.whatsapp.net";
+                        await socket.sendMessage(jid, { text: `🔗 *Your MAHNGUELOH MD Session ID:*\n\n${sessionId}\n\n⚠️ Keep this safe - do not share with anyone!` });
+                        console.log(`[${jobId}] ✅ Session ID sent to ${number}`);
+                    } catch (e) {
+                        console.error(`[${jobId}] Failed to send session ID message:`, e.message);
+                        // Don't fail the pairing if message send fails
+                    }
+                    
                     try {
                         await socket.end(undefined);
                     } catch (e) {
