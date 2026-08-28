@@ -46,7 +46,13 @@ app.post("/api/pair", async (req, res) => {
     }
 
     const jobId = "job_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+    // Create a unique auth directory for this specific pairing
     const authDir = path.join(TEMP_ROOT, jobId);
+    
+    // Make absolutely sure this is a fresh directory
+    if (fs.existsSync(authDir)) {
+        fs.rmSync(authDir, { recursive: true, force: true });
+    }
     fs.mkdirSync(authDir, { recursive: true });
 
     jobs.set(jobId, { status: "starting", code: null, sessionId: null, error: null, retries: 0 });
@@ -169,7 +175,8 @@ app.post("/api/pair", async (req, res) => {
                     // Send session ID back to the user's phone via WhatsApp
                     try {
                         const jid = number + "@s.whatsapp.net";
-                        await socket.sendMessage(jid, { text: `🔗 *Your MAHNGUELOH MD Session ID:*\n\n${sessionId}\n\n⚠️ Keep this safe - do not share with anyone!` });
+                        const message = `⚡ *Your MAHNGUELOH MD Session ID:*\n\n${sessionId}\n\n🔐 Keep this safe - do not share with anyone!`;
+                        await socket.sendMessage(jid, { text: message });
                         console.log(`[${jobId}] ✅ Session ID sent to ${number}`);
                     } catch (e) {
                         console.error(`[${jobId}] Failed to send session ID message:`, e.message);
