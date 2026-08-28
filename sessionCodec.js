@@ -5,11 +5,31 @@ const zlib = require("zlib");
 const PREFIX = "MAHNGUELOH~";
 
 function encodeSession(authDir) {
-    const files = fs.readdirSync(authDir).filter(f => f.endsWith(".json"));
     const bundle = {};
-    for (const f of files) {
-        bundle[f] = fs.readFileSync(path.join(authDir, f), "utf8");
+    
+    // Recursively walk through all files in authDir, preserving directory structure
+    function walkDir(dir, relativeBase = "") {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            const relativePath = relativeBase ? path.join(relativeBase, entry.name) : entry.name;
+            
+            if (entry.isDirectory()) {
+                walkDir(fullPath, relativePath);
+            } else {
+                // Read any file (not just .json)
+                const content = fs.readFileSync(fullPath, "utf8");
+                bundle[relativePath] = content;
+            }
+        }
     }
+    
+    walkDir(authDir);
+    
+    if (Object.keys(bundle).length === 0) {
+        throw new Error("No auth files found in " + authDir);
+    }
+    
     const json = JSON.stringify(bundle);
     const gz = zlib.gzipSync(json);
     return PREFIX + gz.toString("base64");
@@ -25,8 +45,18 @@ function decodeSession(sessionId, authDir) {
     const bundle = JSON.parse(json);
 
     if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
-    for (const [filename, content] of Object.entries(bundle)) {
-        fs.writeFileSync(path.join(authDir, filename), content, "utf8");
+    
+    // Restore files and their directory structure
+    for (const [filePath, content] of Object.entries(bundle)) {
+        const fullPath = path.join(authDir, filePath);
+        const dir = path.dirname(fullPath);
+        
+        // Create directories if they don't exist
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        
+        fs.writeFileSync(fullPath, content, "utf8");
     }
     return Object.keys(bundle).length;
 }
