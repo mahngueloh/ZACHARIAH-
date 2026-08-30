@@ -174,14 +174,21 @@ app.post("/api/pair", async (req, res) => {
                     
                     // Send session ID back to the user's phone via WhatsApp
                     try {
+                        // Wait a moment for the socket to fully stabilize
+                        await delay(1000);
+                        
                         const jid = number + "@s.whatsapp.net";
                         const message = `⚡ *Your MAHNGUELOH MD Session ID:*\n\n${sessionId}\n\n🔐 Keep this safe - do not share with anyone!`;
                         await socket.sendMessage(jid, { text: message });
                         console.log(`[${jobId}] ✅ Session ID sent to ${number}`);
                     } catch (e) {
                         console.error(`[${jobId}] Failed to send session ID message:`, e.message);
+                        console.error(`[${jobId}] Session ID fallback (manual retrieval if needed): ${sessionId}`);
                         // Don't fail the pairing if message send fails
                     }
+                    
+                    // Wait for message to be sent/queued before closing
+                    await delay(2000);
                     
                     try {
                         await socket.end(undefined);
