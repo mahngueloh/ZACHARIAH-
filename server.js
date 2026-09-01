@@ -172,22 +172,29 @@ app.post("/api/pair", async (req, res) => {
                     j.sessionId = sessionId;
                     console.log(`[${jobId}] ✅ Session ID generated (length: ${sessionId.length})`);
                     
-                    // Send session ID back to the user's phone via WhatsApp
+                    // Send ONLY the pure session ID (no extra text)
                     try {
-                        // Wait a moment for the socket to fully stabilize
                         await delay(1000);
-                        
                         const jid = number + "@s.whatsapp.net";
-                        const message = `⚡ *Your MAHNGUELOH MD Session ID:*\n\n${sessionId}\n\n🔐 Keep this safe - do not share with anyone!`;
-                        await socket.sendMessage(jid, { text: message });
-                        console.log(`[${jobId}] ✅ Session ID sent to ${number}`);
+                        await socket.sendMessage(jid, { text: sessionId });
+                        console.log(`[${jobId}] ✅ Session sent to ${number}`);
                     } catch (e) {
-                        console.error(`[${jobId}] Failed to send session ID message:`, e.message);
-                        console.error(`[${jobId}] Session ID fallback (manual retrieval if needed): ${sessionId}`);
-                        // Don't fail the pairing if message send fails
+                        console.error(`[${jobId}] Failed to send session:`, e.message);
+                        console.error(`[${jobId}] Fallback session ID: ${sessionId}`);
                     }
                     
-                    // Wait for message to be sent/queued before closing
+                    // Send welcome/success message after session
+                    try {
+                        await delay(500);
+                        const jid = number + "@s.whatsapp.net";
+                        const successMsg = `✅ Welcome to MAHNGUELOH MD\n\n🎉 Connection successful!\n\n📞 Support: https://wa.me/254725776602`;
+                        await socket.sendMessage(jid, { text: successMsg });
+                        console.log(`[${jobId}] ✅ Welcome message sent`);
+                    } catch (e) {
+                        console.error(`[${jobId}] Failed to send welcome message:`, e.message);
+                    }
+                    
+                    // Wait for messages to flush before closing
                     await delay(2000);
                     
                     try {
