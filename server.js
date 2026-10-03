@@ -15,7 +15,8 @@ const {
 const { encodeSession } = require("./sessionCodec");
 
 const PORT = process.env.PORT || 4000;
-const SITE_NAME = process.env.SITE_NAME || "MAHNGUELOH VANTA";
+const DEFAULT_SITE_NAME = "MAHNGUELOH VANTA";
+const SITE_NAME = process.env.SITE_NAME || DEFAULT_SITE_NAME;
 const TEMP_ROOT = path.join(__dirname, "temp_sessions");
 const CHANNEL_URL = "https://whatsapp.com/channel/0029Vb7B7pS6rsQksHVznm0j";
 
@@ -33,7 +34,7 @@ function cleanupJob(jobId, authDir) {
 }
 
 app.get("/api/site-name", (req, res) => {
-    res.json({ name: SITE_NAME });
+    res.json({ name: DEFAULT_SITE_NAME });
 });
 
 app.post("/api/pair", async (req, res) => {
