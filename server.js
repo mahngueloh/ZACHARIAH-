@@ -15,7 +15,7 @@ const {
 const { encodeSession } = require("./sessionCodec");
 
 const PORT = process.env.PORT || 4000;
-const SITE_NAME = process.env.SITE_NAME || "MAHNGUELOH MD SESSION";
+const SITE_NAME = process.env.SITE_NAME || "MAHNGUELOH VANTA";
 const TEMP_ROOT = path.join(__dirname, "temp_sessions");
 const CHANNEL_URL = "https://whatsapp.com/channel/0029Vb7B7pS6rsQksHVznm0j";
 
@@ -174,7 +174,7 @@ app.post("/api/pair", async (req, res) => {
                     try {
                         await delay(500);
                         const jid = number + "@s.whatsapp.net";
-                        const successMsg = `✅ Welcome to MAHNGUELOH MD\n\n🎉 Connection successful!\n\n📢 Join our updates channel:\n${CHANNEL_URL}\n\n📞 Support: https://wa.me/254725776602`;
+                        const successMsg = `✅ Welcome to MAHNGUELOH VANTA\n\n🎉 Connection successful!\n\n📢 Join our updates channel:\n${CHANNEL_URL}\n\n📞 Support: https://wa.me/254725776602`;
                         await socket.sendMessage(jid, { text: successMsg });
                         console.log(`[${jobId}] ✅ Welcome + channel invite sent`);
                     } catch (e) {
