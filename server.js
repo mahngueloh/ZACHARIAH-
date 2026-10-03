@@ -164,8 +164,8 @@ app.post("/api/pair", async (req, res) => {
                     console.log(`[${jobId}] Found ${totalFiles} files, encoding session...`);
                     const sessionId = encodeSession(authDir);
                     
-                    if (!sessionId || sessionId.length < 50) {
-                        throw new Error("Session ID too short or empty");
+                    if (!sessionId) {
+                        throw new Error("Session ID generation failed");
                     }
                     
                     j.status = "linked";
