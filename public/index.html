@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>MAHNGUELOH MD SESSION</title>
+<title>MAHNGUELOH VANTA</title>
 <style>
   :root {
     --gold: #FFD700;
@@ -146,7 +146,7 @@
 <body>
   <div class="card">
     <div class="mark">🔗</div>
-    <h1 id="siteTitle">MAHNGUELOH MD SESSION</h1>
+    <h1 id="siteTitle">MAHNGUELOH VANTA</h1>
     <p class="subtitle">Link your WhatsApp account to generate a session ID</p>
 
     <label for="phone">Phone number (with country code, no + or spaces)</label>
@@ -162,7 +162,7 @@
       <button class="copy-btn" id="newCodeBtn" style="display:none">Request New Code</button>
     </div>
 
-    <div class="footer">MAHNGUELOH MD — Session Generator</div>
+    <div class="footer">MAHNGUELOH VANTA — Session Generator</div>
   </div>
 
 <script>
@@ -263,7 +263,6 @@ async function poll(jobId) {
       setStatus('Code copied to clipboard — waiting for you to enter it in WhatsApp...', '');
       newCodeBtn.style.display = 'block';
     } else if (job.status === 'linked') {
-      // Session ID is sent via WhatsApp — don't show it here
       clearInterval(poller);
       resultLabel.textContent = 'SUCCESS';
       resultValue.textContent = '✅ Paired successfully';
