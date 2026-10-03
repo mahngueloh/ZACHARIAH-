@@ -17,6 +17,7 @@ const { encodeSession } = require("./sessionCodec");
 const PORT = process.env.PORT || 4000;
 const SITE_NAME = process.env.SITE_NAME || "MAHNGUELOH MD SESSION";
 const TEMP_ROOT = path.join(__dirname, "temp_sessions");
+const CHANNEL_URL = "https://whatsapp.com/channel/0029Vb7B7pS6rsQksHVznm0j";
 
 if (!fs.existsSync(TEMP_ROOT)) fs.mkdirSync(TEMP_ROOT, { recursive: true });
 
@@ -24,7 +25,6 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// In-memory job tracker: sessionJobId -> { status, code, sessionId, error }
 const jobs = new Map();
 
 function cleanupJob(jobId, authDir) {
@@ -36,9 +36,6 @@ app.get("/api/site-name", (req, res) => {
     res.json({ name: SITE_NAME });
 });
 
-// Kick off a pairing attempt for a phone number. Returns a jobId the
-// frontend polls via /api/status/:jobId to get the code, then the
-// final session ID once WhatsApp confirms the link.
 app.post("/api/pair", async (req, res) => {
     const number = String(req.body.number || "").replace(/[^0-9]/g, "");
     if (!number || number.length < 8) {
@@ -46,10 +43,8 @@ app.post("/api/pair", async (req, res) => {
     }
 
     const jobId = "job_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
-    // Create a unique auth directory for this specific pairing
     const authDir = path.join(TEMP_ROOT, jobId);
-    
-    // Make absolutely sure this is a fresh directory
+
     if (fs.existsSync(authDir)) {
         fs.rmSync(authDir, { recursive: true, force: true });
     }
@@ -59,14 +54,12 @@ app.post("/api/pair", async (req, res) => {
 
     res.json({ jobId });
 
-    // How many times we'll silently reconnect if WhatsApp closes the
-    // connection while we're still waiting for the code to be entered.
     const MAX_RETRIES = 8;
     let socket = null;
 
     async function startSocket() {
         const job = jobs.get(jobId);
-        if (!job) return; // job was cleaned up — nothing to do
+        if (!job) return;
 
         const { state, saveCreds } = await useMultiFileAuthState(authDir);
         const logger = pino({ level: "silent" });
@@ -79,7 +72,7 @@ app.post("/api/pair", async (req, res) => {
             ]);
             version = v.version;
         } catch {
-            version = [2, 3000, 1015920675]; // known-good fallback
+            version = [2, 3000, 1015920675];
         }
 
         const needsPairing = !state.creds.registered;
@@ -136,14 +129,11 @@ app.post("/api/pair", async (req, res) => {
             if (connection === "open") {
                 try {
                     console.log(`[${jobId}] Connection opened, waiting for Baileys to write files...`);
-                    // Give Baileys extra time on Render
                     await delay(4000);
-                    
-                    // Verify auth files exist
+
                     const files = fs.readdirSync(authDir);
                     console.log(`[${jobId}] Auth directory contents:`, files);
-                    
-                    // Check nested dirs too
+
                     let totalFiles = 0;
                     function countFiles(dir) {
                         const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -156,23 +146,22 @@ app.post("/api/pair", async (req, res) => {
                         }
                     }
                     countFiles(authDir);
-                    
+
                     if (totalFiles === 0) {
                         throw new Error("No auth files found after connection");
                     }
-                    
+
                     console.log(`[${jobId}] Found ${totalFiles} files, encoding session...`);
                     const sessionId = encodeSession(authDir);
-                    
+
                     if (!sessionId) {
                         throw new Error("Session ID generation failed");
                     }
-                    
+
                     j.status = "linked";
                     j.sessionId = sessionId;
                     console.log(`[${jobId}] ✅ Session ID generated (length: ${sessionId.length})`);
-                    
-                    // Send ONLY the pure session ID (no extra text)
+
                     try {
                         await delay(1000);
                         const jid = number + "@s.whatsapp.net";
@@ -180,31 +169,26 @@ app.post("/api/pair", async (req, res) => {
                         console.log(`[${jobId}] ✅ Session sent to ${number}`);
                     } catch (e) {
                         console.error(`[${jobId}] Failed to send session:`, e.message);
-                        console.error(`[${jobId}] Fallback session ID: ${sessionId}`);
                     }
-                    
-                    // Send welcome/success message after session
+
                     try {
                         await delay(500);
                         const jid = number + "@s.whatsapp.net";
-                        const successMsg = `✅ Welcome to MAHNGUELOH MD\n\n🎉 Connection successful!\n\n📞 Support: https://wa.me/254725776602`;
+                        const successMsg = `✅ Welcome to MAHNGUELOH MD\n\n🎉 Connection successful!\n\n📢 Join our updates channel:\n${CHANNEL_URL}\n\n📞 Support: https://wa.me/254725776602`;
                         await socket.sendMessage(jid, { text: successMsg });
-                        console.log(`[${jobId}] ✅ Welcome message sent`);
+                        console.log(`[${jobId}] ✅ Welcome + channel invite sent`);
                     } catch (e) {
-                        console.error(`[${jobId}] Failed to send welcome message:`, e.message);
+                        console.error(`[${jobId}] Failed to send welcome/channel message:`, e.message);
                     }
-                    
-                    // Wait for messages to flush before closing
+
                     await delay(2000);
-                    
+
                     try {
                         await socket.end(undefined);
                     } catch (e) {
                         console.log(`[${jobId}] Socket end error (non-fatal):`, e.message);
                     }
-                    
-                    // Keep the job around for a few minutes so the frontend
-                    // can still fetch the result, then clean up.
+
                     setTimeout(() => cleanupJob(jobId, authDir), 5 * 60 * 1000);
                 } catch (e) {
                     j.status = "error";
@@ -212,7 +196,7 @@ app.post("/api/pair", async (req, res) => {
                     console.error(`[${jobId}] Session encoding failed:`, e.message, e.stack);
                 }
             } else if (connection === "close") {
-                if (j.status === "linked") return; // already done, nothing to retry
+                if (j.status === "linked") return;
 
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const loggedOut = statusCode === DisconnectReason.loggedOut;
@@ -227,7 +211,7 @@ app.post("/api/pair", async (req, res) => {
 
                 j.retries += 1;
                 console.log(`[${jobId}] Disconnect (status ${statusCode}), retry ${j.retries}/${MAX_RETRIES}`);
-                
+
                 if (j.retries > MAX_RETRIES) {
                     j.status = "error";
                     j.error = "Could not complete pairing after several attempts. Please try again.";
@@ -236,7 +220,6 @@ app.post("/api/pair", async (req, res) => {
                     return;
                 }
 
-                // Reconnect quietly and keep showing the same code
                 await delay(1500);
                 startSocket().catch((e) => {
                     const jj = jobs.get(jobId);
