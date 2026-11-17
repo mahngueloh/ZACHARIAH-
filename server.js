@@ -12,7 +12,7 @@ const {
     delay,
 } = require("@whiskeysockets/baileys");
 
-const { encodeSession, SESSION_STORE, LEGACY_PREFIX } = require("./sessionCodec");
+const { encodeSessionPersistent, lookupShortSession, LEGACY_PREFIX } = require("./sessionCodec");
 
 const PORT = process.env.PORT || 4000;
 const DEFAULT_SITE_NAME = "MAHNGUELOH VANTA";
@@ -37,20 +37,21 @@ app.get("/api/site-name", (req, res) => {
     res.json({ name: DEFAULT_SITE_NAME });
 });
 
-// ── Legacy "MH~" lookup ─────────────────────────────────────────────────────
-// New session IDs are self-contained ("MAHNGUELOH~...") and never need this.
-// Kept only so an old, still-in-memory MH~ ID can be read. It is no longer
-// deleted on first read and has no TTL.
-app.get("/api/session/:id", (req, res) => {
+// ── Short "MH~" lookup ──────────────────────────────────────────────────────
+// With an Upstash Redis database configured, MH~ IDs are permanent and can be
+// redeemed any number of times (no TTL, not deleted on read).
+app.get("/api/session/:id", async (req, res) => {
     const id = String(req.params.id || "");
     if (!id.startsWith(LEGACY_PREFIX)) {
         return res.status(400).json({ error: "Not a short session ID. MAHNGUELOH~ IDs are self-contained and need no lookup." });
     }
-    const bundle = SESSION_STORE.get(id);
-    if (!bundle) {
-        return res.status(404).json({ error: "Old short session not found (this server restarted). Generate a new session ID — new ones never expire." });
+    try {
+        const bundle = await lookupShortSession(id);
+        if (!bundle) return res.status(404).json({ error: "Session not found. Generate a new session ID." });
+        res.json({ bundle });
+    } catch (e) {
+        res.status(502).json({ error: "Session store unavailable: " + e.message });
     }
-    res.json({ bundle });
 });
 
 app.post("/api/pair", async (req, res) => {
@@ -169,7 +170,7 @@ app.post("/api/pair", async (req, res) => {
                     }
 
                     console.log(`[${jobId}] Found ${totalFiles} files, encoding session...`);
-                    const sessionId = encodeSession(authDir);
+                    const sessionId = await encodeSessionPersistent(authDir);
 
                     if (!sessionId) {
                         throw new Error("Session ID generation failed");
