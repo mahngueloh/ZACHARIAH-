@@ -12,7 +12,7 @@ const {
     delay,
 } = require("@whiskeysockets/baileys");
 
-const { encodeSession, SESSION_STORE, PREFIX } = require("./sessionCodec");
+const { encodeSession, SESSION_STORE, LEGACY_PREFIX } = require("./sessionCodec");
 
 const PORT = process.env.PORT || 4000;
 const DEFAULT_SITE_NAME = "MAHNGUELOH VANTA";
@@ -37,26 +37,19 @@ app.get("/api/site-name", (req, res) => {
     res.json({ name: DEFAULT_SITE_NAME });
 });
 
-// ── Redeem a short "MH~..." session ID ──────────────────────────────────────
-// encodeSession() only ever PUT the bundle into SESSION_STORE — nothing in
-// this file ever read it back out. That meant every "MH~" ID handed to a
-// bot was a dead end: it looked like a session ID but could never actually
-// be redeemed by anything, because the data only ever lived in this
-// process's memory with no way to fetch it. This is that missing piece.
-//
-// One-time use and short-lived on purpose: the bundle is deleted the moment
-// it's successfully fetched, on top of the existing 30-minute TTL in
-// sessionCodec.js, so a leaked/old link can't be replayed later.
+// ── Legacy "MH~" lookup ─────────────────────────────────────────────────────
+// New session IDs are self-contained ("MAHNGUELOH~...") and never need this.
+// Kept only so an old, still-in-memory MH~ ID can be read. It is no longer
+// deleted on first read and has no TTL.
 app.get("/api/session/:id", (req, res) => {
     const id = String(req.params.id || "");
-    if (!id.startsWith(PREFIX)) {
-        return res.status(400).json({ error: "Not a valid session ID (wrong prefix)" });
+    if (!id.startsWith(LEGACY_PREFIX)) {
+        return res.status(400).json({ error: "Not a short session ID. MAHNGUELOH~ IDs are self-contained and need no lookup." });
     }
     const bundle = SESSION_STORE.get(id);
     if (!bundle) {
-        return res.status(404).json({ error: "Session not found or expired — sessions last 30 minutes and can only be redeemed once. Generate a new one." });
+        return res.status(404).json({ error: "Old short session not found (this server restarted). Generate a new session ID — new ones never expire." });
     }
-    SESSION_STORE.delete(id);
     res.json({ bundle });
 });
 
